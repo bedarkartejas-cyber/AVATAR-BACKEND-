@@ -2,54 +2,58 @@ import os
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import router  # We will update routes.py next
-from app.config import LIVEKIT_URL  # Verifies config.py is working
+from app.api.routes import router
+from app.config import LIVEKIT_URL
 
-# Initialize the FastAPI application
+# 1. Initialize FastAPI with production metadata
 app = FastAPI(
-    title="Unified Dia AI Presenter",
-    description="Backend for PPT Processing and LiveKit Avatar Integration",
+    title="Unified Dia AI Presenter API",
+    description="Backend for PPT processing and LiveKit Avatar integration.",
     version="2.0.0"
 )
 
-# --- CRITICAL: Unified CORS Configuration ---
-# This is the most important part for fixing your popup error.
-# It tells the browser that your index.html (port 5500) is allowed
-# to send data to this server (port 8000).
+# 2. Configure CORS (Cross-Origin Resource Sharing)
+# This allows your frontend (index.html) to talk to this backend server.
+raw_origins = os.getenv("ALLOWED_ORIGINS", "http://127.0.0.1:5500,http://localhost:5500,http://127.0.0.1:8000")
+origins = [origin.strip() for origin in raw_origins.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins (ideal for local development)
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],  # Allows POST, GET, OPTIONS, etc.
-    allow_headers=["*"],  # Allows Content-Type and Authorization headers
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
 )
 
-# 1. Include the consolidated routes
-# This brings in the /upload-ppt and /livekit/token endpoints
+# 3. Include Slide & Token Routes
 app.include_router(router)
 
-# 2. System Health Check
-# You can visit http://localhost:8000/ in your browser to check if the API is alive.
-@app.get("/")
+# 4. System Health Check
+@app.get("/", tags=["System"])
 async def root():
+    """
+    Standard health check for cloud load balancers.
+    """
     return {
         "status": "online",
         "service": "Unified AI Presenter",
-        "livekit_url": LIVEKIT_URL
+        "livekit_url": LIVEKIT_URL,
+        "environment": os.getenv("ENVIRONMENT", "development")
     }
 
-# 3. Production-Ready Entrypoint
-# This starts the server using Uvicorn when you run 'python -m app.api.main'
+# 5. Production Server Entrypoint
 if __name__ == "__main__":
-    # We use port 8000 as the single unified port
     port = int(os.getenv("PORT", 8000))
     
-    print(f"🚀 Starting Unified Server on port {port}")
-    print(f"📡 API Documentation available at: http://localhost:{port}/docs")
+    # Enable auto-reload only in development mode
+    is_dev = os.getenv("ENVIRONMENT", "development") == "development"
+    
+    print(f"🚀 Starting Unified Server on port {port} (Dev Mode: {is_dev})")
     
     uvicorn.run(
         "app.api.main:app", 
         host="0.0.0.0", 
         port=port, 
-        reload=True  # Automatically restarts the server when you save code changes
+        reload=is_dev,
+        workers=int(os.getenv("WEB_CONCURRENCY", 1))
     )
