@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import sys
 from livekit.agents import (
     Agent,
     AgentSession,
@@ -15,78 +16,132 @@ from app.avatar.persona import SYSTEM_INSTRUCTIONS
 from app.utils.safety import keep_alive
 from app.core.supabase import supabase
 
-logger = logging.getLogger("avatar-agent")
+# Configure Advanced Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("dia-presenter-agent")
 logger.setLevel(logging.INFO)
 
 async def entrypoint(ctx: JobContext):
-    # Connect and subscribe to all participants (the user)
-    await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_ALL)
-    logger.info(f"Agent joined room: {ctx.room.name}")
+    """
+    Core entrypoint for the AI Agent worker. 
+    Manages the orchestration between slides, Gemini LLM, and Anam Avatar.
+    """
+    logger.info(f"🚀 Initializing agent for room: {ctx.room.name}")
 
-    # Extract Presentation ID from metadata injected by routes.py
-    await asyncio.sleep(2.0) 
+    # 1. Join Room and Auto-Subscribe to User (for feedback/questions)
+    # This connects the agent to the LiveKit server instance.
+    try:
+        await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_ALL)
+        logger.info("Successfully connected to LiveKit room.")
+    except Exception as e:
+        logger.error(f"Failed to connect to room: {e}")
+        return
+
+    # 2. Extract Session Metadata
+    # We wait briefly to ensure global participant metadata has propagated.
+    await asyncio.sleep(2.5) 
+    
     presentation_id = None
     for participant in ctx.room.participants.values():
         if participant.metadata:
             presentation_id = participant.metadata
+            logger.info(f"Verified Presentation ID from metadata: {presentation_id}")
             break
 
     if not presentation_id:
-        logger.error("No presentation_id found. Closing session.")
+        logger.error("FATAL: No presentation_id found in room metadata. Closing worker.")
         return
 
-    # Fetch processed slides from Supabase
-    slides = supabase.table("slides") \
-        .select("*") \
-        .eq("presentation_id", presentation_id) \
-        .order("slide_number", ascending=True) \
-        .execute().data
+    # 3. Synchronize Slide Data from Supabase
+    # Ensures the Agent only presents content specific to the current user's upload.
+    logger.info(f"Querying slide manifest for: {presentation_id}")
+    try:
+        query_result = supabase.table("slides") \
+            .select("*") \
+            .eq("presentation_id", presentation_id) \
+            .order("slide_number", ascending=True) \
+            .execute()
+        
+        slides = query_result.data
+        if not slides:
+            logger.error(f"Integrity Error: No slides found for valid presentation ID {presentation_id}")
+            return
+        logger.info(f"Loaded {len(slides)} slides successfully.")
+    except Exception as e:
+        logger.error(f"Supabase Query Failed: {e}")
+        return
 
-    # Initialize Brain and Visuals
+    # 4. Initialize Brain (Gemini) and Visuals (Anam)
     llm = create_llm()
     avatar = create_avatar()
 
-    # SESSION CONFIG: CRITICAL FOR AVATAR VISIBILITY
-    # speaking_fps=0 prevents the agent from fighting Anam for the video track.
+    # 5. CONFIGURE AGENT SESSION (CRITICAL FOR AVATAR STABILITY)
+    # speaking_fps=0 is required to prevent the Agent from publishing an empty 
+    # video track that would conflict with the Anam plugin's stream.
+    # min_endpointing_delay=2.0 provides the buffer needed for video lip-sync.
     session = AgentSession(
         llm=llm,
         video_sampler=VoiceActivityVideoSampler(speaking_fps=0, silent_fps=0),
         preemptive_generation=False,
-        min_endpointing_delay=2.0, # Buffering for Avatar lip-sync
+        min_endpointing_delay=2.0, 
         max_endpointing_delay=5.0,
     )
 
-    # Start Anam session
+    # Attach the Anam plugin to the session
+    # This allows Anam to intercept text chunks and convert them to video.
     await avatar.start(session, room=ctx.room)
 
-    # Begin AI Session
+    # Define strict presentation rules for the LLM
+    # Prevents 'run-on' speech that can cause the avatar to lag.
+    presenter_instructions = (
+        f"{SYSTEM_INSTRUCTIONS}\n"
+        "GOAL: Present the provided slide deck semantically. "
+        "STRICT LIMIT: Maximum 2 sentences per response. Wait for playout."
+    )
+
+    # Start the integrated AI service
     await session.start(
-        agent=Agent(instructions=SYSTEM_INSTRUCTIONS),
+        agent=Agent(instructions=presenter_instructions),
         room=ctx.room,
         room_input_options=room_io.RoomInputOptions(video_enabled=True),
     )
 
-    # THE PRESENTATION LOOP
+    # 6. THE SYNCHRONIZED PRESENTATION LOOP
+    logger.info("Starting automated presentation sequence.")
     for slide in slides:
-        # Update frontend slide via Room Attributes
+        slide_no = slide["slide_number"]
+        image_url = slide["image_url"]
+        content_text = slide["extracted_text"]
+
+        # TRIGGER FRONTEND SYNC:
+        # Updating local participant attributes triggers a global event 
+        # in the index.html via the ParticipantAttributesChanged listener.
         await ctx.room.local_participant.set_attributes({
-            "current_slide_url": slide["image_url"]
+            "current_slide_url": image_url
         })
 
-        logger.info(f"Speaking Slide: {slide['slide_number']}")
-        
-        # Instruct Gemini to present this specific slide text
+        logger.info(f"Displaying Slide {slide_no} to participants.")
+
+        # Command Gemini to synthesize speech for the slide content
         session.generate_reply(
-            instructions=f"Slide Content: {slide['extracted_text']}. Please present this naturally."
+            instructions=f"Slide {slide_no} Text Content: {content_text}. Present this clearly."
         )
 
-        # Wait for the Avatar to finish speaking before moving to next slide
+        # WAIT FOR COMPLETION:
+        # Essential to wait for audio/video playback to finish before moving on.
         await session.wait_for_playout()
-        await asyncio.sleep(1.5)
+        
+        # Buffer delay between slides for natural transitions
+        await asyncio.sleep(2.0) 
 
-    # Wrap up
-    session.generate_reply(instructions="Conclude the presentation and offer to answer questions.")
+    # 7. Final Handover
+    session.generate_reply(instructions="Thank the audience and ask if there are any specific questions.")
+    
+    logger.info("Sequence Complete. Entering active standby mode.")
+    
+    # Keep the process alive for user questions/interaction
     await keep_alive(ctx)
 
 if __name__ == "__main__":
+    # Required for the LiveKit CLI to start the worker process
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
