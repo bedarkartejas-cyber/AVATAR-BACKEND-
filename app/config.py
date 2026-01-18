@@ -1,38 +1,63 @@
 import os
+from dataclasses import dataclass
 from dotenv import load_dotenv
 
-# Load the environment variables from the .env file in your root directory
+# Explicitly load the .env file for local development environment
 load_dotenv()
 
-# --- LiveKit Settings ---
-# These are used to generate the session token for the avatar
-LIVEKIT_URL = os.getenv("LIVEKIT_URL")
-LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY")
-LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
+@dataclass(frozen=True)
+class Config:
+    """
+    Centralized configuration class with strict validation.
+    Ensures all necessary API keys are present before the app runs.
+    """
+    # LiveKit Settings
+    LIVEKIT_URL: str = os.getenv("LIVEKIT_URL", "")
+    LIVEKIT_API_KEY: str = os.getenv("LIVEKIT_API_KEY", "")
+    LIVEKIT_API_SECRET: str = os.getenv("LIVEKIT_API_SECRET", "")
+    
+    # Anam Avatar Settings
+    ANAM_API_KEY: str = os.getenv("ANAM_API_KEY", "")
+    ANAM_AVATAR_ID: str = os.getenv("ANAM_AVATAR_ID", "")
+    
+    # Gemini LLM Settings
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
-# --- Supabase Settings ---
-# Used to store the extracted slide text and image metadata
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+    # Supabase Settings (Required for your PPT project)
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+    SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
+    BUCKET_IMAGES: str = os.getenv("BUCKET_IMAGES", "slide-images")
 
-# --- Storage Settings ---
-# These must match the bucket names you created in your Supabase dashboard
-BUCKET_PPTS = os.getenv("BUCKET_PPTS", "ppts")
-BUCKET_IMAGES = os.getenv("BUCKET_IMAGES", "slide-images")
+    # PPT Processing
+    CONVERTAPI_KEY: str = os.getenv("CONVERTAPI_KEY", "")
 
-# --- PPT Processing (ConvertAPI) ---
-# Used by the ppt_processor to turn slides into high-quality JPGs
-CONVERTAPI_KEY = os.getenv("CONVERTAPI_KEY")
+    def validate(self):
+        """
+        Checks if any mandatory environment variable is empty.
+        If a variable is missing, it raises a helpful error message.
+        """
+        missing = [k for k, v in self.__dict__.items() if not v]
+        if missing:
+            raise ValueError(f"❌ Missing mandatory environment variables: {', '.join(missing)}")
 
-# --- AI Agent Settings ---
-# Credentials for the Gemini LLM and Anam Avatar
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-ANAM_API_KEY = os.getenv("ANAM_API_KEY")
-ANAM_AVATAR_ID = os.getenv("ANAM_AVATAR_ID")
+# 1. Create the configuration instance
+_config = Config()
 
-# --- System Validation ---
-# This helper print ensures your .env is actually being read
-if not all([LIVEKIT_API_KEY, SUPABASE_URL, CONVERTAPI_KEY]):
-    print("⚠️ WARNING: Essential environment variables are missing in your .env file!")
-else:
-    print("✅ Configuration loaded successfully.")
+# 2. Run validation immediately on startup
+_config.validate()
+
+# 3. Export variables as constants for easy importing in other files
+LIVEKIT_URL = _config.LIVEKIT_URL
+LIVEKIT_API_KEY = _config.LIVEKIT_API_KEY
+LIVEKIT_API_SECRET = _config.LIVEKIT_API_SECRET
+
+ANAM_API_KEY = _config.ANAM_API_KEY
+ANAM_AVATAR_ID = _config.ANAM_AVATAR_ID
+
+GEMINI_API_KEY = _config.GEMINI_API_KEY
+
+SUPABASE_URL = _config.SUPABASE_URL
+SUPABASE_SERVICE_KEY = _config.SUPABASE_SERVICE_KEY
+BUCKET_IMAGES = _config.BUCKET_IMAGES
+
+CONVERTAPI_KEY = _config.CONVERTAPI_KEY
