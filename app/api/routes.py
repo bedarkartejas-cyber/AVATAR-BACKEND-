@@ -24,33 +24,33 @@ async def upload_ppt_and_get_token(file: UploadFile = File(...)):
     """
     Unified Route: 
     1. Processes PPT.
-    2. Creates Parent Presentation record (Fixes Foreign Key Error).
-    3. Saves Child Slides.
-    4. Returns Token.
+    2. Saves data to Supabase.
+    3. Returns Token with Presentation ID in Metadata.
     """
     if not file.filename.endswith(".pptx"):
         raise HTTPException(status_code=400, detail="Only .pptx files allowed.")
 
-    # 1. Generate IDs
+    # 1. Generate Unique IDs for this session
     presentation_id = str(uuid.uuid4())
-    user_id = str(uuid.uuid4()) # Unique ID for this session
+    user_id = str(uuid.uuid4()) 
     identity = f"user_{uuid.uuid4().hex[:6]}"
     room_name = f"room_{presentation_id}"
     
+    # Create temporary workspace for processing
     work_dir = os.path.join("workdir", presentation_id)
     os.makedirs(work_dir, exist_ok=True)
     ppt_path = os.path.join(work_dir, file.filename)
 
     try:
-        # 2. Process Locally
+        # 2. Save and Process PPT Locally
         with open(ppt_path, "wb") as f:
             f.write(await file.read())
 
         image_files = convert_ppt_to_images(ppt_path, work_dir)
         slides_text = extract_text_slidewise(ppt_path)
 
-        # --- STEP 3: CREATE PARENT RECORD (CRITICAL FIX) ---
-        # This prevents the 'fk_presentation' foreign key error
+        # 3. Create Parent Presentation Record
+        # This prevents Foreign Key errors in Supabase
         supabase.table("presentations").insert({
             "id": presentation_id,
             "user_id": user_id,
@@ -58,16 +58,16 @@ async def upload_ppt_and_get_token(file: UploadFile = File(...)):
             "total_slides": len(slides_text)
         }).execute()
 
-        # --- STEP 4: SAVE CHILD SLIDES ---
+        # 4. Save Individual Slides (Images & Text)
         for i, slide in enumerate(slides_text):
             slide_no = slide["slide_number"]
             storage_path = f"{user_id}/{presentation_id}/slide_{slide_no}.jpg"
             
-            # Upload image
+            # Upload slide image to Supabase Storage
             supabase.storage.from_(BUCKET_IMAGES).upload(storage_path, image_files[i])
             img_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET_IMAGES}/{storage_path}"
 
-            # Save metadata
+            # Save metadata to the slides table
             supabase.table("slides").insert({
                 "presentation_id": presentation_id,
                 "user_id": user_id,
@@ -76,7 +76,8 @@ async def upload_ppt_and_get_token(file: UploadFile = File(...)):
                 "extracted_text": slide["text"]
             }).execute()
 
-        # --- STEP 5: GENERATE TOKEN ---
+        # 5. Generate LiveKit Token
+        # Critical: We put presentation_id in metadata so the agent retrieves these specific slides
         token = api.AccessToken(
             LIVEKIT_API_KEY,
             LIVEKIT_API_SECRET
@@ -93,7 +94,8 @@ async def upload_ppt_and_get_token(file: UploadFile = File(...)):
         }
 
     except Exception as e:
-        logger.error(f"❌ Database Error: {str(e)}")
+        logger.error(f"❌ Processing Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
+        # Cleanup temporary files
         shutil.rmtree(work_dir, ignore_errors=True)
