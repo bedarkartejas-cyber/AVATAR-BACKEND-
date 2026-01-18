@@ -15,13 +15,12 @@ from app.avatar.persona import SYSTEM_INSTRUCTIONS
 from app.utils.safety import keep_alive
 from app.core.supabase import supabase
 
-# Configure logging
+# Configure logging to monitor the Agent's behavior
 logger = logging.getLogger("avatar-agent")
 logger.setLevel(logging.INFO)
 
 async def entrypoint(ctx: JobContext):
     # 1. Connect to the room and subscribe to all tracks
-    # Standard connection method ensuring the agent can see the user
     await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_ALL)
     logger.info(f"Connected to room: {ctx.room.name}")
 
@@ -41,7 +40,6 @@ async def entrypoint(ctx: JobContext):
         return
 
     # 3. Fetch Slide Data from Supabase
-    # Retrieves the images and text processed by your API
     slides_query = supabase.table("slides") \
         .select("*") \
         .eq("presentation_id", presentation_id) \
@@ -57,13 +55,15 @@ async def entrypoint(ctx: JobContext):
     llm = create_llm()
     avatar = create_avatar()
 
-    # CRITICAL CONFIGURATION:
-    # speaking_fps=0 delegates video track management to the Anam plugin
-    # min_endpointing_delay=2.0 prevents the agent from cutting off the avatar
+    # CRITICAL BACKEND SYNC CONFIGURATION:
+    # Setting speaking_fps and silent_fps to 0 is mandatory.
+    # This ensures the Agent does not publish its own video track,
+    # which would otherwise block the Anam Avatar's high-quality stream.
     session = AgentSession(
         llm=llm,
         video_sampler=VoiceActivityVideoSampler(speaking_fps=0, silent_fps=0),
         preemptive_generation=False,
+        # 2.0s delay is required to allow the avatar buffer to stay in sync with Gemini audio.
         min_endpointing_delay=2.0, 
         max_endpointing_delay=5.0,
     )
@@ -81,6 +81,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(
         agent=Agent(instructions=presenter_instructions),
         room=ctx.room,
+        # Ensure video_enabled=True to allow the session to handle video tracks.
         room_input_options=room_io.RoomInputOptions(video_enabled=True),
     )
 
@@ -90,7 +91,7 @@ async def entrypoint(ctx: JobContext):
         image_url = slide["image_url"]
         text = slide["extracted_text"]
 
-        # SYNC: Update room attributes so the frontend changes the slide image
+        # SYNC: Update room attributes so the frontend changes the slide image.
         await ctx.room.local_participant.set_attributes({
             "current_slide_url": image_url
         })
@@ -102,14 +103,14 @@ async def entrypoint(ctx: JobContext):
             instructions=f"Slide {slide_no} Content: {text}. Please present this naturally."
         )
 
-        # Wait for the audio/video playout to finish before moving forward
+        # Wait for the audio/video playout to finish before moving forward.
         await session.wait_for_playout()
         await asyncio.sleep(1.5) 
 
     # 7. Conclusion
     session.generate_reply(instructions="Thank the audience and ask for questions.")
     
-    # Keep the agent alive while the user is in the room
+    # Keep the agent alive while the user is in the room.
     await keep_alive(ctx)
 
 if __name__ == "__main__":
