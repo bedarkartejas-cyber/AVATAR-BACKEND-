@@ -15,102 +15,77 @@ from app.avatar.persona import SYSTEM_INSTRUCTIONS
 from app.utils.safety import keep_alive
 from app.core.supabase import supabase
 
-# Configure logging to monitor the Agent's behavior
 logger = logging.getLogger("avatar-agent")
 logger.setLevel(logging.INFO)
 
 async def entrypoint(ctx: JobContext):
-    # 1. Connect to the room and subscribe to all tracks
+    # Connect and subscribe to all participants (the user)
     await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_ALL)
-    logger.info(f"Connected to room: {ctx.room.name}")
+    logger.info(f"Agent joined room: {ctx.room.name}")
 
-    # 2. Extract the Presentation ID from Metadata
-    # Delay allows participant metadata to sync across the network
-    await asyncio.sleep(1.5) 
-    
+    # Extract Presentation ID from metadata injected by routes.py
+    await asyncio.sleep(2.0) 
     presentation_id = None
     for participant in ctx.room.participants.values():
         if participant.metadata:
             presentation_id = participant.metadata
-            logger.info(f"Found Presentation ID: {presentation_id}")
             break
 
     if not presentation_id:
-        logger.error("FATAL: No presentation_id found in metadata. Exiting.")
+        logger.error("No presentation_id found. Closing session.")
         return
 
-    # 3. Fetch Slide Data from Supabase
-    slides_query = supabase.table("slides") \
+    # Fetch processed slides from Supabase
+    slides = supabase.table("slides") \
         .select("*") \
         .eq("presentation_id", presentation_id) \
         .order("slide_number", ascending=True) \
-        .execute()
-    
-    slides = slides_query.data
-    if not slides:
-        logger.error(f"No slides found for ID: {presentation_id}")
-        return
+        .execute().data
 
-    # 4. Initialize AI Brain (Gemini) and Avatar (Anam)
+    # Initialize Brain and Visuals
     llm = create_llm()
     avatar = create_avatar()
 
-    # CRITICAL BACKEND SYNC CONFIGURATION:
-    # Setting speaking_fps and silent_fps to 0 is mandatory.
-    # This ensures the Agent does not publish its own video track,
-    # which would otherwise block the Anam Avatar's high-quality stream.
+    # SESSION CONFIG: CRITICAL FOR AVATAR VISIBILITY
+    # speaking_fps=0 prevents the agent from fighting Anam for the video track.
     session = AgentSession(
         llm=llm,
         video_sampler=VoiceActivityVideoSampler(speaking_fps=0, silent_fps=0),
         preemptive_generation=False,
-        # 2.0s delay is required to allow the avatar buffer to stay in sync with Gemini audio.
-        min_endpointing_delay=2.0, 
+        min_endpointing_delay=2.0, # Buffering for Avatar lip-sync
         max_endpointing_delay=5.0,
     )
 
-    # Link the avatar visual to this specific session and room
+    # Start Anam session
     await avatar.start(session, room=ctx.room)
 
-    # 5. Define the Presentation Persona
-    presenter_instructions = (
-        f"{SYSTEM_INSTRUCTIONS}\n"
-        "STRICT RULE: Reply in only ONE or TWO short sentences. "
-        "Do not speak long paragraphs. Wait for the user to reply."
-    )
-
+    # Begin AI Session
     await session.start(
-        agent=Agent(instructions=presenter_instructions),
+        agent=Agent(instructions=SYSTEM_INSTRUCTIONS),
         room=ctx.room,
-        # Ensure video_enabled=True to allow the session to handle video tracks.
         room_input_options=room_io.RoomInputOptions(video_enabled=True),
     )
 
-    # 6. The Presentation Loop
+    # THE PRESENTATION LOOP
     for slide in slides:
-        slide_no = slide["slide_number"]
-        image_url = slide["image_url"]
-        text = slide["extracted_text"]
-
-        # SYNC: Update room attributes so the frontend changes the slide image.
+        # Update frontend slide via Room Attributes
         await ctx.room.local_participant.set_attributes({
-            "current_slide_url": image_url
+            "current_slide_url": slide["image_url"]
         })
 
-        logger.info(f"Presenting Slide {slide_no}...")
-
-        # Tell the Agent to speak the slide content
+        logger.info(f"Speaking Slide: {slide['slide_number']}")
+        
+        # Instruct Gemini to present this specific slide text
         session.generate_reply(
-            instructions=f"Slide {slide_no} Content: {text}. Please present this naturally."
+            instructions=f"Slide Content: {slide['extracted_text']}. Please present this naturally."
         )
 
-        # Wait for the audio/video playout to finish before moving forward.
+        # Wait for the Avatar to finish speaking before moving to next slide
         await session.wait_for_playout()
-        await asyncio.sleep(1.5) 
+        await asyncio.sleep(1.5)
 
-    # 7. Conclusion
-    session.generate_reply(instructions="Thank the audience and ask for questions.")
-    
-    # Keep the agent alive while the user is in the room.
+    # Wrap up
+    session.generate_reply(instructions="Conclude the presentation and offer to answer questions.")
     await keep_alive(ctx)
 
 if __name__ == "__main__":
