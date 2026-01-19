@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # # import asyncio
 # # import logging
 # # import sys
@@ -198,6 +199,8 @@
 
 
 
+=======
+>>>>>>> d81b999eb4affffb22c30c9b8eb8cb7078a0df65
 # import asyncio
 # import logging
 # import sys
@@ -255,6 +258,10 @@
 #     # 3. Synchronize Slide Data from Supabase
 #     logger.info(f"🔍 Querying slide manifest for: {presentation_id}")
 #     try:
+<<<<<<< HEAD
+=======
+#         # FIXED: Use desc=False instead of ascending=True for current supabase-py version
+>>>>>>> d81b999eb4affffb22c30c9b8eb8cb7078a0df65
 #         query_result = supabase.table("slides") \
 #             .select("*") \
 #             .eq("presentation_id", presentation_id) \
@@ -330,8 +337,11 @@
 
 #     # 6. THE SYNCHRONIZED PRESENTATION LOOP
 #     logger.info("🎬 Starting automated presentation sequence.")
+<<<<<<< HEAD
     
 #     # CRITICAL: Track speech handles to ensure sequential presentation
+=======
+>>>>>>> d81b999eb4affffb22c30c9b8eb8cb7078a0df65
 #     for idx, slide in enumerate(slides, start=1):
 #         slide_no = slide.get("slide_number", idx)
 #         image_url = slide.get("image_url", "")
@@ -357,6 +367,7 @@
 #                 f"Slide {slide_no}: {content_text}\n\n"
 #                 "Present this slide's key points clearly in 1-2 sentences."
 #             )
+<<<<<<< HEAD
             
 #             # FIXED: Use generate_reply() for realtime models
 #             # This returns a SpeechHandle that we can await
@@ -365,6 +376,12 @@
 #             # Wait for the current speech to be ready (generation complete)
 #             await speech_handle.wait_for_next_playout()
             
+=======
+#             session.generate_reply(instructions=slide_instruction)
+            
+#             # WAIT FOR COMPLETION: Ensures audio/video finishes before moving to next slide
+#             await session.wait_for_playout()
+>>>>>>> d81b999eb4affffb22c30c9b8eb8cb7078a0df65
 #             logger.info(f"✅ Completed presentation of slide {slide_no}.")
             
 #             # Buffer delay between slides for natural transitions
@@ -378,10 +395,17 @@
 #     # 7. Final Handover
 #     try:
 #         logger.info("🎉 All slides presented. Thanking audience.")
+<<<<<<< HEAD
 #         final_speech = session.generate_reply(
 #             instructions="Thank you for your attention! I'd be happy to answer any questions you may have about this presentation."
 #         )
 #         await final_speech.wait_for_next_playout()
+=======
+#         session.generate_reply(
+#             instructions="Thank the audience warmly and ask if there are any questions about the presentation."
+#         )
+#         await session.wait_for_playout()
+>>>>>>> d81b999eb4affffb22c30c9b8eb8cb7078a0df65
 #     except Exception as e:
 #         logger.error(f"❌ Error in final message: {e}")
     
@@ -398,6 +422,14 @@
 
 
 
+<<<<<<< HEAD
+=======
+
+
+
+
+
+>>>>>>> d81b999eb4affffb22c30c9b8eb8cb7078a0df65
 import asyncio
 import logging
 from livekit.agents import (
@@ -545,6 +577,7 @@ async def entrypoint(ctx: JobContext):
         logger.error(f"❌ Failed to start session: {e}")
         return
 
+<<<<<<< HEAD
     # 6. Send initial slide data to frontend
     logger.info("📤 Sending initial slide to frontend...")
     try:
@@ -554,6 +587,62 @@ async def entrypoint(ctx: JobContext):
             "presentation_status": "ready"
         })
         logger.info(f"✅ Sent metadata to frontend")
+=======
+    # 6. THE SYNCHRONIZED PRESENTATION LOOP
+    logger.info("🎬 Starting automated presentation sequence.")
+    
+    # CRITICAL: Track speech handles to ensure sequential presentation
+    for idx, slide in enumerate(slides, start=1):
+        slide_no = slide.get("slide_number", idx)
+        image_url = slide.get("image_url", "")
+        content_text = slide.get("extracted_text", "")
+
+        if not image_url:
+            logger.warning(f"⚠️ Slide {slide_no} has no image URL. Skipping.")
+            continue
+
+        try:
+            # TRIGGER FRONTEND SYNC: Update local participant attributes
+            await ctx.room.local_participant.set_attributes({
+                "current_slide_url": image_url
+            })
+            logger.info(f"📊 Displaying Slide {slide_no}/{len(slides)} to participants.")
+        except Exception as e:
+            logger.error(f"❌ Failed to set slide attributes: {e}")
+            continue
+
+        try:
+            # Command Gemini to present the slide content
+            slide_instruction = (
+                f"Slide {slide_no}: {content_text}\n\n"
+                "Present this slide's key points clearly in 1-2 sentences."
+            )
+            
+            # FIXED: Use generate_reply() for realtime models
+            # This returns a SpeechHandle that we can await
+            speech_handle = session.generate_reply(instructions=slide_instruction)
+            
+            # Wait for the current speech to be ready (generation complete)
+            await speech_handle.wait_for_next_playout()
+            
+            logger.info(f"✅ Completed presentation of slide {slide_no}.")
+            
+            # Buffer delay between slides for natural transitions
+            await asyncio.sleep(2.0)
+            
+        except Exception as e:
+            logger.error(f"❌ Error presenting slide {slide_no}: {e}")
+            # Continue to next slide even if one fails
+            continue
+
+    # 7. Final Handover
+    try:
+        logger.info("🎉 All slides presented. Thanking audience.")
+        final_speech = session.generate_reply(
+            instructions="Thank you for your attention! I'd be happy to answer any questions you may have about this presentation."
+        )
+        await final_speech.wait_for_next_playout()
+>>>>>>> d81b999eb4affffb22c30c9b8eb8cb7078a0df65
     except Exception as e:
         logger.error(f"❌ Failed to send metadata: {e}")
 
@@ -679,3 +768,9 @@ async def update_slide_display():
 
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+
+
+
+
+
+
