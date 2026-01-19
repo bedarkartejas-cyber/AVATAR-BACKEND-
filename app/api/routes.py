@@ -22,7 +22,7 @@ router = APIRouter()
 async def upload_ppt(file: UploadFile = File(...)):
     """
     Step 1: Upload and Process PPT.
-    Returns the presentation_id to be used for token generation.
+    Saves images to Storage and metadata to Database.
     """
     if not file.filename.endswith(".pptx"):
         raise HTTPException(status_code=400, detail="Document must be in .pptx format.")
@@ -34,14 +34,14 @@ async def upload_ppt(file: UploadFile = File(...)):
     ppt_path = os.path.join(work_dir, file.filename)
 
     try:
-        # Save and process file locally
+        # Save file locally for processing
         with open(ppt_path, "wb") as buffer:
             buffer.write(await file.read())
 
         image_files = convert_ppt_to_images(ppt_path, work_dir)
         slides_text = extract_text_slidewise(ppt_path)
 
-        # Save Parent Presentation
+        # 1. Create Parent Presentation Entry
         supabase.table("presentations").insert({
             "id": presentation_id,
             "user_id": user_id,
@@ -49,11 +49,12 @@ async def upload_ppt(file: UploadFile = File(...)):
             "total_slides": len(slides_text)
         }).execute()
 
-        # Save Individual Slides
+        # 2. Process and Upload each slide
         for i, slide_data in enumerate(slides_text):
             slide_no = slide_data["slide_number"]
             storage_path = f"{user_id}/{presentation_id}/slide_{slide_no}.jpg"
             
+            # Upload image to Supabase Storage
             with open(image_files[i], "rb") as image_content:
                 supabase.storage.from_(BUCKET_IMAGES).upload(
                     path=storage_path, 
@@ -63,6 +64,7 @@ async def upload_ppt(file: UploadFile = File(...)):
             
             img_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET_IMAGES}/{storage_path}"
 
+            # Save slide metadata to Database
             supabase.table("slides").insert({
                 "presentation_id": presentation_id,
                 "user_id": user_id,
@@ -74,26 +76,50 @@ async def upload_ppt(file: UploadFile = File(...)):
         return {
             "status": "success",
             "presentation_id": presentation_id,
-            "message": "PPT processed and slides saved to Supabase."
+            "message": "PPT processed and slides saved successfully."
         }
 
     except Exception as e:
         logger.error(f"Upload Failure: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
+        # Cleanup local temporary files
         if os.path.exists(work_dir):
             shutil.rmtree(work_dir, ignore_errors=True)
+
+@router.get("/presentation/{presentation_id}/slides")
+async def get_all_slides(presentation_id: str):
+    """
+    NEW ENDPOINT: Fetches all slide data for React Pre-Caching.
+    This allows the frontend to load all images before the presentation starts.
+    """
+    try:
+        response = supabase.table("slides") \
+            .select("slide_number, image_url, extracted_text") \
+            .eq("presentation_id", presentation_id) \
+            .order("slide_number", desc=False) \
+            .execute()
+
+        if not response.data:
+            raise HTTPException(status_code=404, detail="No slides found for this ID.")
+
+        return {
+            "presentation_id": presentation_id,
+            "slides": response.data
+        }
+    except Exception as e:
+        logger.error(f"Fetch Error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch slide data.")
 
 @router.get("/livekit/token")
 async def get_token(presentation_id: str, identity: str):
     """
-    Step 2: Generate Token and start Avatar session.
-    The presentation_id is required in metadata so the Agent can find the slides.
+    Step 2: Generate Token for the session.
+    The presentation_id is passed as metadata so the Agent can find the slides.
     """
     try:
         room_name = f"dia_session_{presentation_id[:8]}"
         
-        # Create token and embed presentation_id in metadata
         token = api.AccessToken(
             LIVEKIT_API_KEY,
             LIVEKIT_API_SECRET
@@ -107,4 +133,128 @@ async def get_token(presentation_id: str, identity: str):
             "room": room_name
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Token error: {str(e)}")
+        logger.error(f"Token Generation Error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to generate token.")
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+#     import os
+# import uuid
+# import shutil
+# import logging
+# from fastapi import APIRouter, UploadFile, File, HTTPException
+# from livekit import api
+
+# from app.core.supabase import supabase
+# from app.core.ppt_processor import extract_text_slidewise, convert_ppt_to_images
+# from app.config import (
+#     LIVEKIT_API_KEY,
+#     LIVEKIT_API_SECRET,
+#     LIVEKIT_URL,
+#     BUCKET_IMAGES,
+#     SUPABASE_URL
+# )
+
+# logger = logging.getLogger("api-routes-dia")
+# router = APIRouter()
+
+# @router.post("/upload-ppt")
+# async def upload_ppt(file: UploadFile = File(...)):
+#     """
+#     Step 1: Upload and Process PPT.
+#     Returns the presentation_id to be used for token generation.
+#     """
+#     if not file.filename.endswith(".pptx"):
+#         raise HTTPException(status_code=400, detail="Document must be in .pptx format.")
+
+#     presentation_id = str(uuid.uuid4())
+#     user_id = str(uuid.uuid4()) 
+#     work_dir = os.path.join("workdir", presentation_id)
+#     os.makedirs(work_dir, exist_ok=True)
+#     ppt_path = os.path.join(work_dir, file.filename)
+
+#     try:
+#         # Save and process file locally
+#         with open(ppt_path, "wb") as buffer:
+#             buffer.write(await file.read())
+
+#         image_files = convert_ppt_to_images(ppt_path, work_dir)
+#         slides_text = extract_text_slidewise(ppt_path)
+
+#         # Save Parent Presentation
+#         supabase.table("presentations").insert({
+#             "id": presentation_id,
+#             "user_id": user_id,
+#             "title": file.filename,
+#             "total_slides": len(slides_text)
+#         }).execute()
+
+#         # Save Individual Slides
+#         for i, slide_data in enumerate(slides_text):
+#             slide_no = slide_data["slide_number"]
+#             storage_path = f"{user_id}/{presentation_id}/slide_{slide_no}.jpg"
+            
+#             with open(image_files[i], "rb") as image_content:
+#                 supabase.storage.from_(BUCKET_IMAGES).upload(
+#                     path=storage_path, 
+#                     file=image_content.read(),
+#                     file_options={"content-type": "image/jpeg"}
+#                 )
+            
+#             img_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET_IMAGES}/{storage_path}"
+
+#             supabase.table("slides").insert({
+#                 "presentation_id": presentation_id,
+#                 "user_id": user_id,
+#                 "slide_number": slide_no,
+#                 "image_url": img_url,
+#                 "extracted_text": slide_data["text"]
+#             }).execute()
+
+#         return {
+#             "status": "success",
+#             "presentation_id": presentation_id,
+#             "message": "PPT processed and slides saved to Supabase."
+#         }
+
+#     except Exception as e:
+#         logger.error(f"Upload Failure: {str(e)}")
+#         raise HTTPException(status_code=500, detail=str(e))
+#     finally:
+#         if os.path.exists(work_dir):
+#             shutil.rmtree(work_dir, ignore_errors=True)
+
+# @router.get("/livekit/token")
+# async def get_token(presentation_id: str, identity: str):
+#     """
+#     Step 2: Generate Token and start Avatar session.
+#     The presentation_id is required in metadata so the Agent can find the slides.
+#     """
+#     try:
+#         room_name = f"dia_session_{presentation_id[:8]}"
+        
+#         # Create token and embed presentation_id in metadata
+#         token = api.AccessToken(
+#             LIVEKIT_API_KEY,
+#             LIVEKIT_API_SECRET
+#         ).with_identity(identity).with_metadata(presentation_id) 
+        
+#         token.with_grants(api.VideoGrants(room_join=True, room=room_name))
+        
+#         return {
+#             "token": token.to_jwt(),
+#             "url": LIVEKIT_URL,
+#             "room": room_name
+#         }
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Token error: {str(e)}")
