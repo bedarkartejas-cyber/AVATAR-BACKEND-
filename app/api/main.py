@@ -13,15 +13,18 @@ app = FastAPI(
 )
 
 # 2. Configure CORS (Cross-Origin Resource Sharing)
-# This allows your frontend (index.html) to talk to this backend server.
-raw_origins = os.getenv("ALLOWED_ORIGINS", "http://127.0.0.1:5500,http://localhost:5500,http://127.0.0.1:8000")
+# Updated to include localhost:3000 and support preflight OPTIONS requests.
+raw_origins = os.getenv(
+    "ALLOWED_ORIGINS", 
+    "http://127.0.0.1:3000,http://localhost:3000,http://127.0.0.1:5500,http://localhost:5500,http://127.0.0.1:8000"
+)
 origins = [origin.strip() for origin in raw_origins.split(",")]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins, # Explicitly list origins for better security
     allow_credentials=True,
-    allow_methods=["GET", "POST","OPTIONS"],
+    allow_methods=["GET", "POST", "OPTIONS"], # Critical for browser preflight
     allow_headers=["*"],
 )
 
@@ -29,6 +32,7 @@ app.add_middleware(
 app.include_router(router)
 
 # 4. System Health Check
+# Standard root check
 @app.get("/", tags=["System"])
 async def root():
     """
@@ -41,14 +45,22 @@ async def root():
         "environment": os.getenv("ENVIRONMENT", "development")
     }
 
-# 5. Production Server Entrypoint
+# 5. Dedicated Health Check
+# Added to satisfy Render/Cloud health monitors looking for /health
+@app.get("/health", tags=["System"])
+async def health():
+    return {"status": "ok", "service": "api-routes-dia"}
+
+# 6. Production Server Entrypoint
 if __name__ == "__main__":
+    # Use the port assigned by Render or default to 8000
     port = int(os.getenv("PORT", 8000))
     
-    # Enable auto-reload only in development mode
+    # Toggle reload based on the ENVIRONMENT variable
     is_dev = os.getenv("ENVIRONMENT", "development") == "development"
     
     print(f"🚀 Starting Unified Server on port {port} (Dev Mode: {is_dev})")
+    print(f"📡 Serving CORS for: {origins}")
     
     uvicorn.run(
         "app.api.main:app", 
