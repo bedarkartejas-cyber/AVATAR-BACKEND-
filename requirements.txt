@@ -1,12 +1,10 @@
+livekit-agents>=0.8.0
+livekit-plugins-google>=0.6.0
+livekit-plugins-anam>=0.1.0
 fastapi
 uvicorn
-gunicorn
 python-multipart
 python-pptx
 convertapi
 supabase
 python-dotenv
-livekit
-livekit-agents
-livekit-plugins-google
-livekit-plugins-anam
