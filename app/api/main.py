@@ -6,6 +6,7 @@ from app.api.routes import router
 from app.config import LIVEKIT_URL
 
 # 1. Initialize FastAPI with production metadata
+# This unified backend handles both PPT processing and AI coordination.
 app = FastAPI(
     title="Unified Dia AI Presenter API",
     description="Backend for PPT processing and LiveKit Avatar integration.",
@@ -13,17 +14,18 @@ app = FastAPI(
 )
 
 # 2. Configure CORS (Cross-Origin Resource Sharing)
-# Using "*" allows all origins (localhost:3000, 5500, etc.) to communicate with the API.
-# Critical for resolving preflight OPTIONS 400 errors during cross-port requests.
+# Using "*" allows all origins (including localhost:3000 and 5500) to communicate.
+# This resolves the 'OPTIONS 400' errors seen in browser preflight requests.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Global permission for all origins
+    allow_origins=["*"], 
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"], # Mandatory for browser preflight
+    allow_methods=["GET", "POST", "OPTIONS"], 
     allow_headers=["*"],
 )
 
 # 3. Include Slide & Token Routes
+# This router handles the logic for /upload-ppt as defined in routes.py.
 app.include_router(router)
 
 # 4. System Health Check (Root)
@@ -39,8 +41,8 @@ async def root():
         "environment": os.getenv("ENVIRONMENT", "development")
     }
 
-# 5. Dedicated Health Check
-# Added to satisfy Render/Cloud health monitors explicitly looking for /health
+# 5. Dedicated Health Check Endpoint
+# Added specifically to satisfy Render health monitors looking for /health.
 @app.get("/health", tags=["System"])
 async def health():
     return {"status": "ok", "service": "api-routes-dia"}
@@ -50,7 +52,7 @@ if __name__ == "__main__":
     # Use the port assigned by Render or default to 8000
     port = int(os.getenv("PORT", 8000))
     
-    # Toggle reload based on the ENVIRONMENT variable
+    # Enable auto-reload only in development mode
     is_dev = os.getenv("ENVIRONMENT", "development") == "development"
     
     print(f"🚀 Starting Unified Server on port {port} (Dev Mode: {is_dev})")
