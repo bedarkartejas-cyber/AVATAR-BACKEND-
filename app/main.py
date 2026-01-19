@@ -678,4 +678,8 @@ async def update_slide_display():
 
 
 if __name__ == "__main__":
+<<<<<<< HEAD
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+=======
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+>>>>>>> deb0b087b596c3013a39d6bd6b3b9d4fcf8a7068
