@@ -15,7 +15,7 @@ app = FastAPI(
 
 # 2. Configure CORS (Cross-Origin Resource Sharing)
 # Using "*" allows all origins (including localhost:3000 and 5500) to communicate.
-# This resolves the 'OPTIONS 400' errors seen in browser preflight requests.
+# This resolves potential 'OPTIONS 400' or CORS errors in browser requests.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -25,7 +25,7 @@ app.add_middleware(
 )
 
 # 3. Include Slide & Token Routes
-# This router handles the logic for /upload-ppt as defined in routes.py.
+# This router handles the logic for /upload-ppt and /livekit/token.
 app.include_router(router)
 
 # 4. System Health Check (Root)
@@ -42,21 +42,20 @@ async def root():
     }
 
 # 5. Dedicated Health Check Endpoint
-# Added specifically to satisfy Render health monitors looking for /health.
+# Added specifically to satisfy cloud monitors (like Render) looking for /health.
 @app.get("/health", tags=["System"])
 async def health():
     return {"status": "ok", "service": "api-routes-dia"}
 
 # 6. Production Server Entrypoint
 if __name__ == "__main__":
-    # Use the port assigned by Render or default to 8000
+    # Use the port assigned by the environment (e.g., Render) or default to 8000
     port = int(os.getenv("PORT", 8000))
     
     # Enable auto-reload only in development mode
     is_dev = os.getenv("ENVIRONMENT", "development") == "development"
     
     print(f"🚀 Starting Unified Server on port {port} (Dev Mode: {is_dev})")
-    print(f"📡 Serving Global CORS (Allow Origins: *)")
     
     uvicorn.run(
         "app.api.main:app", 

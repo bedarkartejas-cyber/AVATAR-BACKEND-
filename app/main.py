@@ -29,7 +29,6 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"🚀 Initializing agent for room: {ctx.room.name}")
 
     # 1. Join Room and Auto-Subscribe to User
-    # This connects the agent to the LiveKit room to interact with the participant.
     try:
         await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_ALL)
         logger.info("Successfully connected to LiveKit room.")
@@ -38,12 +37,12 @@ async def entrypoint(ctx: JobContext):
         return
 
     # 2. Extract Session Metadata
-    # We wait briefly (2.5s) to ensure global participant metadata has propagated.
+    # Fix: Wait for metadata propagation and check remote_participants
     await asyncio.sleep(2.5) 
     
     presentation_id = None
-    # We retrieve the presentation_id passed via token metadata from the backend.
-    for participant in ctx.room.participants.values():
+    # Check remote participants (the human user) for the presentation_id metadata
+    for participant in ctx.room.remote_participants.values():
         if participant.metadata:
             presentation_id = participant.metadata
             logger.info(f"Verified Presentation ID from metadata: {presentation_id}")
@@ -54,13 +53,13 @@ async def entrypoint(ctx: JobContext):
         return
 
     # 3. Synchronize Slide Data from Supabase
-    # Fetches the specific slide images and text extracted during the upload process.
+    # Fix: Use desc=False instead of ascending=True for the current supabase-py version
     logger.info(f"Querying slide manifest for: {presentation_id}")
     try:
         query_result = supabase.table("slides") \
             .select("*") \
             .eq("presentation_id", presentation_id) \
-            .order("slide_number", ascending=True) \
+            .order("slide_number", desc=False) \
             .execute()
         
         slides = query_result.data
@@ -76,9 +75,7 @@ async def entrypoint(ctx: JobContext):
     llm = create_llm()
     avatar = create_avatar()
 
-    # 5. CONFIGURE AGENT SESSION (CRITICAL FOR AVATAR STABILITY)
-    # speaking_fps=0 is required to prevent the Agent from publishing a conflicting video track.
-    # min_endpointing_delay=2.0 provides the buffer needed for video lip-sync.
+    # 5. CONFIGURE AGENT SESSION
     session = AgentSession(
         llm=llm,
         video_sampler=VoiceActivityVideoSampler(speaking_fps=0, silent_fps=0),
@@ -87,10 +84,9 @@ async def entrypoint(ctx: JobContext):
         max_endpointing_delay=5.0,
     )
 
-    # Attach the Anam plugin to intercept text and convert it to avatar video.
+    # Attach the Anam plugin to intercept text and convert it to avatar video
     await avatar.start(session, room=ctx.room)
 
-    # Define presentation rules for the LLM to prevent lag and ensure clarity.
     presenter_instructions = (
         f"{SYSTEM_INSTRUCTIONS}\n"
         "GOAL: Present the provided slide deck semantically. "
@@ -111,24 +107,22 @@ async def entrypoint(ctx: JobContext):
         image_url = slide["image_url"]
         content_text = slide["extracted_text"]
 
-        # TRIGGER FRONTEND SYNC:
-        # Updating local participant attributes triggers the slide change on the frontend.
+        # TRIGGER FRONTEND SYNC: Update local participant attributes
         await ctx.room.local_participant.set_attributes({
             "current_slide_url": image_url
         })
 
         logger.info(f"Displaying Slide {slide_no} to participants.")
 
-        # Command Gemini to present the slide content.
+        # Command Gemini to present the slide content
         session.generate_reply(
             instructions=f"Slide {slide_no} Text Content: {content_text}. Present this clearly."
         )
 
-        # WAIT FOR COMPLETION:
-        # Ensures audio/video finishes before moving to the next slide.
+        # WAIT FOR COMPLETION: Ensures audio/video finishes before moving to the next slide
         await session.wait_for_playout()
         
-        # Buffer delay between slides for natural transitions.
+        # Buffer delay between slides for natural transitions
         await asyncio.sleep(2.0) 
 
     # 7. Final Handover
@@ -136,9 +130,8 @@ async def entrypoint(ctx: JobContext):
     
     logger.info("Sequence Complete. Entering active standby mode.")
     
-    # Keep the process alive for user interaction.
+    # Keep the process alive for user interaction
     await keep_alive(ctx)
 
 if __name__ == "__main__":
-    # Required for the LiveKit CLI to start the worker process.
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
