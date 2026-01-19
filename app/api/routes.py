@@ -22,7 +22,7 @@ router = APIRouter()
 async def upload_ppt(file: UploadFile = File(...)):
     """
     Step 1: Upload and Process PPT.
-    Saves images to Storage and metadata to Database.
+    Optimized: Uses batch inserts to make database population near-instant.
     """
     if not file.filename.endswith(".pptx"):
         raise HTTPException(status_code=400, detail="Document must be in .pptx format.")
@@ -34,14 +34,14 @@ async def upload_ppt(file: UploadFile = File(...)):
     ppt_path = os.path.join(work_dir, file.filename)
 
     try:
-        # Save file locally for processing
+        # Save file locally
         with open(ppt_path, "wb") as buffer:
             buffer.write(await file.read())
 
         image_files = convert_ppt_to_images(ppt_path, work_dir)
         slides_text = extract_text_slidewise(ppt_path)
 
-        # 1. Create Parent Presentation Entry
+        # 1. Save Parent Presentation
         supabase.table("presentations").insert({
             "id": presentation_id,
             "user_id": user_id,
@@ -49,12 +49,13 @@ async def upload_ppt(file: UploadFile = File(...)):
             "total_slides": len(slides_text)
         }).execute()
 
-        # 2. Process and Upload each slide
+        # 2. Upload Images and Prepare BATCH Data
+        # We collect all slide info in a list instead of calling the DB in a loop
+        slides_to_batch = []
         for i, slide_data in enumerate(slides_text):
             slide_no = slide_data["slide_number"]
             storage_path = f"{user_id}/{presentation_id}/slide_{slide_no}.jpg"
             
-            # Upload image to Supabase Storage
             with open(image_files[i], "rb") as image_content:
                 supabase.storage.from_(BUCKET_IMAGES).upload(
                     path=storage_path, 
@@ -64,34 +65,35 @@ async def upload_ppt(file: UploadFile = File(...)):
             
             img_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET_IMAGES}/{storage_path}"
 
-            # Save slide metadata to Database
-            supabase.table("slides").insert({
+            slides_to_batch.append({
                 "presentation_id": presentation_id,
                 "user_id": user_id,
                 "slide_number": slide_no,
                 "image_url": img_url,
                 "extracted_text": slide_data["text"]
-            }).execute()
+            })
+
+        # 3. FAST BATCH INSERT: Single request to Supabase
+        if slides_to_batch:
+            supabase.table("slides").insert(slides_to_batch).execute()
 
         return {
             "status": "success",
-            "presentation_id": presentation_id,
-            "message": "PPT processed and slides saved successfully."
+            "presentation_id": presentation_id
         }
 
     except Exception as e:
         logger.error(f"Upload Failure: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # Cleanup local temporary files
         if os.path.exists(work_dir):
             shutil.rmtree(work_dir, ignore_errors=True)
 
 @router.get("/presentation/{presentation_id}/slides")
 async def get_all_slides(presentation_id: str):
     """
-    NEW ENDPOINT: Fetches all slide data for React Pre-Caching.
-    This allows the frontend to load all images before the presentation starts.
+    NEW ENDPOINT: For React pre-caching.
+    Fetches all slide image URLs and text in one go.
     """
     try:
         response = supabase.table("slides") \
@@ -100,26 +102,21 @@ async def get_all_slides(presentation_id: str):
             .order("slide_number", desc=False) \
             .execute()
 
-        if not response.data:
-            raise HTTPException(status_code=404, detail="No slides found for this ID.")
-
         return {
             "presentation_id": presentation_id,
             "slides": response.data
         }
     except Exception as e:
         logger.error(f"Fetch Error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to fetch slide data.")
+        raise HTTPException(status_code=500, detail="Failed to fetch slide manifest.")
 
 @router.get("/livekit/token")
 async def get_token(presentation_id: str, identity: str):
     """
-    Step 2: Generate Token for the session.
-    The presentation_id is passed as metadata so the Agent can find the slides.
+    Step 2: Generate token with metadata for the Agent.
     """
     try:
         room_name = f"dia_session_{presentation_id[:8]}"
-        
         token = api.AccessToken(
             LIVEKIT_API_KEY,
             LIVEKIT_API_SECRET
@@ -133,8 +130,7 @@ async def get_token(presentation_id: str, identity: str):
             "room": room_name
         }
     except Exception as e:
-        logger.error(f"Token Generation Error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to generate token.")
+        raise HTTPException(status_code=500, detail=f"Token error: {str(e)}")
     
     
     
