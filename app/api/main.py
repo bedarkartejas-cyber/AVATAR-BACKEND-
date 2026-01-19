@@ -13,26 +13,20 @@ app = FastAPI(
 )
 
 # 2. Configure CORS (Cross-Origin Resource Sharing)
-# Updated to include localhost:3000 and support preflight OPTIONS requests.
-raw_origins = os.getenv(
-    "ALLOWED_ORIGINS", 
-    "http://127.0.0.1:3000,http://localhost:3000,http://127.0.0.1:5500,http://localhost:5500,http://127.0.0.1:8000"
-)
-origins = [origin.strip() for origin in raw_origins.split(",")]
-
+# Using "*" allows all origins (localhost:3000, 5500, etc.) to communicate with the API.
+# Critical for resolving preflight OPTIONS 400 errors during cross-port requests.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins, # Explicitly list origins for better security
+    allow_origins=["*"], # Global permission for all origins
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"], # Critical for browser preflight
+    allow_methods=["GET", "POST", "OPTIONS"], # Mandatory for browser preflight
     allow_headers=["*"],
 )
 
 # 3. Include Slide & Token Routes
 app.include_router(router)
 
-# 4. System Health Check
-# Standard root check
+# 4. System Health Check (Root)
 @app.get("/", tags=["System"])
 async def root():
     """
@@ -46,7 +40,7 @@ async def root():
     }
 
 # 5. Dedicated Health Check
-# Added to satisfy Render/Cloud health monitors looking for /health
+# Added to satisfy Render/Cloud health monitors explicitly looking for /health
 @app.get("/health", tags=["System"])
 async def health():
     return {"status": "ok", "service": "api-routes-dia"}
@@ -60,7 +54,7 @@ if __name__ == "__main__":
     is_dev = os.getenv("ENVIRONMENT", "development") == "development"
     
     print(f"🚀 Starting Unified Server on port {port} (Dev Mode: {is_dev})")
-    print(f"📡 Serving CORS for: {origins}")
+    print(f"📡 Serving Global CORS (Allow Origins: *)")
     
     uvicorn.run(
         "app.api.main:app", 
