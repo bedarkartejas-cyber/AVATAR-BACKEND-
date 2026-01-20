@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Simli LiveKit Avatar</title>
+
+  <!-- LiveKit UMD Client -->
+  <script src="https://unpkg.com/livekit-client/dist/livekit-client.umd.js"></script>
+
+  <style>
+    body {
+      background: #0f172a;
+      color: white;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin: 0;
+      padding: 20px;
+    }
+
+    button {
+      background: #2563eb;
+      border: none;
+      padding: 10px 20px;
+      font-size: 16px;
+      color: white;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      background: #475569;
+      cursor: not-allowed;
+    }
+
+    #videos {
+      margin-top: 20px;
+      display: flex;
+      justify-content: center;
+    }
+
+    video {
+      width: 480px;
+      max-width: 90%;
+      border-radius: 12px;
+      background: black;
+    }
+
+    #status {
+      margin-top: 12px;
+      font-size: 14px;
+      opacity: 0.85;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h2>🎭 Simli Live Avatar</h2>
+  <button id="join">Join & Talk</button>
+  <div id="status">Not connected</div>
+
+  <div id="videos"></div>
+
+  <script>
+  const room = new LivekitClient.Room();
+  const joinBtn = document.getElementById("join");
+  const statusEl = document.getElementById("status");
+  const videosDiv = document.getElementById("videos");
+
+  let avatarVideoAttached = false;
+
+  function attachAvatarVideo(track, participant) {
+    if (avatarVideoAttached) return;
+    if (participant.isLocal) return;
+    if (track.kind !== "video") return;
+
+    console.log("🎭 Attaching avatar video");
+
+    const el = track.attach();
+    videosDiv.appendChild(el);
+    avatarVideoAttached = true;
+    statusEl.textContent = "Avatar connected 🎭";
+  }
+
+  joinBtn.onclick = async () => {
+    try {
+      statusEl.textContent = "Connecting…";
+
+      // 1️⃣ Fetch token
+      const tokenResp = await fetch("http://127.0.0.1:8000/token");
+      const { token, url } = await tokenResp.json();
+
+      // 2️⃣ Connect to LiveKit
+      await room.connect(url, token);
+      statusEl.textContent = "Connected. Waiting for avatar…";
+
+      // 3️⃣ Handle ALREADY published remote tracks (CORRECT WAY)
+      room.remoteParticipants.forEach((participant) => {
+        participant.tracks.forEach((publication) => {
+          if (publication.track) {
+            console.log("📡 Existing track:", publication.track.kind);
+            attachAvatarVideo(publication.track, participant);
+
+            if (publication.track.kind === "audio") {
+              publication.track.attach();
+            }
+          }
+        });
+      });
+
+      // 4️⃣ Handle FUTURE tracks
+      room.on(
+        LivekitClient.RoomEvent.TrackSubscribed,
+        (track, publication, participant) => {
+          console.log("📡 New track subscribed:", track.kind);
+          attachAvatarVideo(track, participant);
+
+          if (track.kind === "audio") {
+            track.attach();
+          }
+        }
+      );
+
+      // 5️⃣ Enable microphone (UMD-safe)
+      const audioTrack = await LivekitClient.createLocalAudioTrack();
+      await room.localParticipant.publishTrack(audioTrack);
+
+      joinBtn.disabled = true;
+      joinBtn.textContent = "Connected";
+
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = "Connection failed ❌";
+    }
+  };
+</script>
+
+
+
+</body>
+</html>
